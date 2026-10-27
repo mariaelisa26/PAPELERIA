@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Solicitud de papelería</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<main>
+  <h1>Solicitud de papelería</h1>
+  <p class="sub">Indica qué insumos necesitas, en qué cantidad y para qué área.</p>
+
+  <section class="card">
+    <h2>Nueva solicitud</h2>
+    <div id="noDb" class="msg err hidden">No se pudo conectar con el registro de solicitudes. Intenta recargar la página.</div>
+    <form id="form" autocomplete="off">
+      <div class="row">
+        <div>
+          <label for="nombre">Tu nombre</label>
+          <input id="nombre" required maxlength="80">
+        </div>
+        <div>
+          <label for="area">Área</label>
+          <select id="area" required>
+            <option value="">Selecciona un área</option>
+            <option>Administración</option>
+            <option>Contabilidad</option>
+            <option>Recursos Humanos</option>
+            <option>Ventas</option>
+            <option>Operaciones</option>
+            <option>Tecnología</option>
+            <option>Servicio al cliente</option>
+            <option>Gerencia</option>
+            <option>Otra</option>
+          </select>
+        </div>
+      </div>
+
+      <label for="insumo">Insumo</label>
+      <input id="insumo" list="insumos" required maxlength="100" placeholder="Ej. Resma de papel carta">
+      <datalist id="insumos">
+        <option>Resma de papel carta</option>
+        <option>Resma de papel oficio</option>
+        <option>Bolígrafos azules</option>
+        <option>Bolígrafos negros</option>
+        <option>Lápices</option>
+        <option>Marcadores</option>
+        <option>Borrador</option>
+        <option>Cuadernos</option>
+        <option>Carpetas</option>
+        <option>Sobres manila</option>
+        <option>Post-it</option>
+        <option>Cinta adhesiva</option>
+        <option>Grapas</option>
+        <option>Grapadora</option>
+        <option>Perforadora</option>
+        <option>Tijeras</option>
+        <option>Tóner / tinta de impresora</option>
+      </datalist>
+
+      <div class="row">
+        <div>
+          <label for="cantidad">Cantidad</label>
+          <input id="cantidad" type="number" min="1" max="10000" required>
+        </div>
+        <div>
+          <label for="urgencia">Urgencia</label>
+          <select id="urgencia">
+            <option>Normal</option>
+            <option>Urgente</option>
+          </select>
+        </div>
+      </div>
+
+      <label for="obs">Observaciones (opcional)</label>
+      <textarea id="obs" maxlength="300" placeholder="Marca, color, tamaño, etc."></textarea>
+
+      <button type="submit" id="submitBtn">Enviar solicitud</button>
+      <div id="msg" class="msg" role="status"></div>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>Solicitudes recientes</h2>
+    <div id="list"><p class="empty">Cargando…</p></div>
+  </section>
+</main>
+
+<script>
+(async () => {
+  const claude = window.claude;
+  let db = null, user = null;
+  try {
+    db = await claude.use("db");
+    user = await claude.use("user");
+  } catch (e) { db = null; }
+
+  const form = document.getElementById("form");
+  const msg = document.getElementById("msg");
+  const list = document.getElementById("list");
+  const btn = document.getElementById("submitBtn");
+
+  if (!db) {
+    document.getElementById("noDb").classList.remove("hidden");
+    btn.disabled = true;
+    list.innerHTML = '<p class="empty">El registro no está disponible en esta vista.</p>';
+    return;
+  }
+
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const fmt = ts => ts ? new Date(ts).toLocaleString("es-CO", {dateStyle: "medium", timeStyle: "short"}) : "";
+
+  function render(docs) {
+    if (!docs.length) { list.innerHTML = '<p class="empty">Aún no hay solicitudes.</p>'; return; }
+    docs.sort((a, b) => (b.creado || 0) - (a.creado || 0));
+    list.innerHTML = docs.slice(0, 50).map(d => `
+      <div class="item">
+        <strong>${esc(d.insumo)}</strong> × ${esc(d.cantidad)}
+        ${d.urgencia === "Urgente" ? '<span style="color:#E85000;font-weight:600"> · Urgente</span>' : ""}
+        <div class="meta">${esc(d.nombre)} · ${esc(d.area)} · ${fmt(d.creado)}</div>
+        ${d.obs ? `<div class="meta">${esc(d.obs)}</div>` : ""}
+      </div>`).join("");
+  }
+
+  db.collection("solicitudes").onSnapshot(snap => {
+    const docs = (snap.docs || snap).map(x => (x.data ? x.data() : x));
+    render(docs);
+  }, () => { list.innerHTML = '<p class="empty">No se pudieron cargar las solicitudes.</p>'; });
+
+  form.addEventListener("submit", async e => {
+    e.preventDefault();
+    btn.disabled = true; msg.className = "msg"; msg.textContent = "Enviando…";
+    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    const data = {
+      nombre: document.getElementById("nombre").value.trim(),
+      area: document.getElementById("area").value,
+      insumo: document.getElementById("insumo").value.trim(),
+      cantidad: Number(document.getElementById("cantidad").value),
+      urgencia: document.getElementById("urgencia").value,
+      obs: document.getElementById("obs").value.trim(),
+      creado: Date.now()
+    };
+    try {
+      await db.collection("solicitudes").doc(id).set(data);
+      msg.className = "msg ok"; msg.textContent = "Solicitud enviada. ¡Gracias!";
+      form.reset();
+    } catch (err) {
+      msg.className = "msg err";
+      msg.textContent = "No se pudo enviar. Revisa los datos e intenta de nuevo.";
+    } finally {
+      btn.disabled = false;
+    }
+  });
+})();
+</script>
+</body>
+</html>
